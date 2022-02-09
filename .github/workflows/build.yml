@@ -33,7 +33,7 @@ jobs:
         with:
           pull: false
           push: true
-          tags: ghcr.io/bmoers/sn/atf-headless-runner:latest,ghcr.io/bmoers/sn/atf-headless-runner:${{ VERSION }}
+          tags: ghcr.io/bmoers/sn/atf-headless-runner:latest,ghcr.io/bmoers/sn/atf-headless-runner:${VERSION}
           labels: |
             org.opencontainers.image.source=${{ github.event.repository.html_url }}
             org.opencontainers.image.revision=${{ github.sha }}
