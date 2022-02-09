@@ -30,7 +30,7 @@ jobs:
           VERSION=$(node -e "console.log(require('./package.json').version)")
           TAGS="ghcr.io/bmoers/sn/atf-headless-runner:latest"
           TAGS="$TAGS,ghcr.io/bmoers/sn/atf-headless-runner:sha-${GITHUB_SHA::8}"
-          TAGS="$TAGS,ghcr.io/bmoers/sn/atf-headless-runner:sha-${VERSION}"
+          TAGS="$TAGS,ghcr.io/bmoers/sn/atf-headless-runner:${VERSION}"
           echo ::set-output name=tags::${TAGS}
           
 
