@@ -167,7 +167,7 @@ const openTestRunner = async () => {
 
     await page.screenshot({ path: `screens/${process.env.HEADLESS_VALIDATION_PAGE}-done.png` });
 
-    const runnerPage = `${process.env.INSTANCE_URL}/${process.env.RUNNER_URL}`;
+    const runnerPage = `${process.env.INSTANCE_URL}/${process.env.RUNNER_URL}&sys_atf_agent=${process.env.AGENT_ID}`;
     console.log(`Goto runner page: ${runnerPage}`);
     await page.goto(runnerPage)
     console.log(`\tCheck for banner ID on page: ${process.env.TEST_RUNNER_BANNER_ID}`);
