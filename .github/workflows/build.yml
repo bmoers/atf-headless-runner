@@ -44,4 +44,5 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.event.repository.html_url }}
             org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.description Alternative Headless ATF Runner for ServiceNow
 
