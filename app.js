@@ -90,6 +90,7 @@ const getBrowser = async () => {
     const browserNames = {
         'headlesschrome': 'chromium',
         'headlessfirefox': 'firefox',
+        'headlesssafari': 'webkit',
         'firefox': 'firefox',
         'chrome': 'chromium',
         'chromium': 'chromium',
@@ -187,7 +188,7 @@ const openTestRunner = async () => {
         await browser.close();
     });
 
-    const ignore = [`.jsdbx?`, `${process.env.INSTANCE_URL}/styles/`, `${process.env.INSTANCE_URL}/api/now/ui/`, `${process.env.INSTANCE_URL}/scripts/`, `${process.env.INSTANCE_URL}/amb/`, `${process.env.INSTANCE_URL}/xmlhttp.do`, `${process.env.INSTANCE_URL}/images/`]
+    const ignore = [`.jsdbx`, `${process.env.INSTANCE_URL}/styles/`, `${process.env.INSTANCE_URL}/api/now/ui/`, `${process.env.INSTANCE_URL}/scripts/`, `${process.env.INSTANCE_URL}/amb/`, `${process.env.INSTANCE_URL}/xmlhttp.do`, `${process.env.INSTANCE_URL}/images/`]
     console.log(`Runner page background requests:`);
     page.on('request', async (request) => {
         const url = request.url();
