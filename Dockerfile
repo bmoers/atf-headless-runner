@@ -13,4 +13,6 @@ RUN npm ci --only=production --no-optional --no-audit --no-fund
 
 ADD ./app.js ./
 
+HEALTHCHECK NONE
+
 CMD node app.js
