@@ -115,7 +115,7 @@ const openTestRunner = async () => {
 
     const page = await context.newPage();
     page.on('pageerror', exception => {
-        console.log(`Browser PAGE-ERROR: Uncaught exception: "${exception}"`);
+        console.log(`\tBrowser - Error on Page: Uncaught exception: "${exception}"`);
     });
 
     const loginPage = `${process.env.INSTANCE_URL}/${process.env.LOGIN_PAGE}`;
