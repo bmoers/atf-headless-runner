@@ -12,6 +12,7 @@ ADD ./package*.json ./
 RUN npm ci --only=production --no-optional --no-audit --no-fund 
 
 ADD ./app.js ./
+ADD ./lib ./lib
 
 HEALTHCHECK NONE
 
