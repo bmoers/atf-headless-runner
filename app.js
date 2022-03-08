@@ -3,6 +3,8 @@ const playWright = require('playwright');
 const fs = require('fs-extra');
 const { setTimeout } = require("timers/promises");
 
+const log = require('./lib/logger').topic(module);
+
 const mandatoryVars = {
     'AGENT_ID': 'The agent ID should be auto-generated from the instance',
     'BROWSER': 'There was no browser type identified in the request',
@@ -32,14 +34,15 @@ const validateVariables = async () => {
 
 
     if (missing.length) {
-        console.error('Following variables are missing')
-        missing.forEach(([name, description]) => console.log(`\t${name}: ${description}`));
+        log.error('Following variables are missing')
+
+        missing.forEach(([name, description]) => log.error(`\t${name}: ${description}`));        
         process.exit(1);
     }
 
-    console.log(`Variables:`);
-    Object.keys(mandatoryVars).forEach((name) => console.log(`\t${name.padEnd(30)} : ${process.env[name]}`));
-    console.log(`--`);
+    log.info(`Variables:`);
+    Object.keys(mandatoryVars).forEach((name) => log.info(`\t${name.padEnd(30)} : ${process.env[name]}`));
+    log.info(`--`);
 }
 
 
@@ -71,8 +74,8 @@ const getText = async (page, selector) => {
 
         return locator.innerText();
     } catch (e) {
-        console.error(e.message);
-        console.log(await page.content());
+        log.error(e.message);
+        log.info(await page.content());
         await page.screenshot({ path: `screens/error.png` });
         throw Error(`Text of '${selector}' not found on page`);
     }
@@ -101,9 +104,9 @@ const getBrowser = async () => {
     const browserName = browserNames[process.env.BROWSER] || defaultBrowser;
     //{ chromium, webkit, firefox }
 
-    console.log(`Open Browser`);
-    console.log(`\t${browserName}`);
-    console.log(`--`);
+    log.info(`Open Browser`);
+    log.info(`\t${browserName}`);
+    log.info(`--`);
     return playWright[browserName].launch();
 }
 
@@ -115,85 +118,85 @@ const openTestRunner = async () => {
 
     const page = await context.newPage();
     page.on('pageerror', exception => {
-        console.log(`\tBrowser - Error on Page: Uncaught exception: "${exception}"`);
+        log.info(`\tBrowser - Error on Page: Uncaught exception: "${exception}"`);
     });
 
     const loginPage = `${process.env.INSTANCE_URL}/${process.env.LOGIN_PAGE}`;
-    console.log(`Goto Login Page: ${loginPage}`);
+    log.info(`Goto Login Page: ${loginPage}`);
     await page.goto(loginPage, { waitUntil: 'networkidle' });
-    console.log('Login page is open')
-    console.log(`--`);
+    log.info('Login page is open')
+    log.info(`--`);
 
     await page.screenshot({ path: `screens/login-page-open.png` });
 
 
-    console.log('Fill login form')
-    console.log('\tEnter username')
+    log.info('Fill login form')
+    log.info('\tEnter username')
     await page.type(`#${process.env.USER_FIELD_ID}`, process.env.SN_USERNAME, { delay: 100 });
     const password = await getPassword();
-    console.log('\tEnter password')
+    log.info('\tEnter password')
     await page.type(`#${process.env.PASSWORD_FIELD_ID}`, password, { delay: 100 });
-    console.log(`--`);
+    log.info(`--`);
     await page.screenshot({ path: `screens/${process.env.LOGIN_PAGE}-filled.png` });
 
 
-    console.log('Submit login form')
+    log.info('Submit login form')
     await Promise.all([
         page.waitForNavigation(),
         page.click(`#${process.env.LOGIN_BUTTON_ID}`)
     ])
-    console.log(`--`);
+    log.info(`--`);
 
     await page.screenshot({ path: `screens/${process.env.LOGIN_PAGE}-done.png` });
 
     const validationPage = `${process.env.INSTANCE_URL}/${process.env.HEADLESS_VALIDATION_PAGE}`;
-    console.log(`Goto access validation page: ${validationPage}`);
+    log.info(`Goto access validation page: ${validationPage}`);
     await page.goto(validationPage, { waitUntil: 'load' })
 
     const validation = await getText(page, `#${process.env.VP_VALIDATION_ID}`);
     if ('Headless Validation' != validation)
         throw Error(`Validation Tag '${process.env.VP_VALIDATION_ID}' text incorrect: ${validation}`)
-    console.log(`\t${process.env.VP_VALIDATION_ID.padEnd(22)} : ${validation}`);
+    log.info(`\t${process.env.VP_VALIDATION_ID.padEnd(22)} : ${validation}`);
 
     const role = await getText(page, `#${process.env.VP_HAS_ROLE_ID}`);
     if ('Has Valid Role' != role)
         throw Error(`Role Tag '${process.env.VP_HAS_ROLE_ID}' text incorrect: ${role}`)
-    console.log(`\t${process.env.VP_HAS_ROLE_ID.padEnd(22)} : ${role}`);
+    log.info(`\t${process.env.VP_HAS_ROLE_ID.padEnd(22)} : ${role}`);
 
     const success = await getText(page, `#${process.env.VP_SUCCESS_ID}`);
     if ('Success' != success)
         throw Error(`Success Tag '${process.env.VP_SUCCESS_ID}' text incorrect: ${success}`)
-    console.log(`\t${process.env.VP_SUCCESS_ID.padEnd(22)} : ${success}`);
-    console.log(`--`);
+    log.info(`\t${process.env.VP_SUCCESS_ID.padEnd(22)} : ${success}`);
+    log.info(`--`);
 
     await page.screenshot({ path: `screens/${process.env.HEADLESS_VALIDATION_PAGE}-done.png` });
 
     const runnerPage = `${process.env.INSTANCE_URL}/${process.env.RUNNER_URL}&sys_atf_agent=${process.env.AGENT_ID}`;
-    console.log(`Goto runner page: ${runnerPage}`);
+    log.info(`Goto runner page: ${runnerPage}`);
     await page.goto(runnerPage)
-    console.log(`\tCheck for banner ID on page: ${process.env.TEST_RUNNER_BANNER_ID}`);
+    log.info(`\tCheck for banner ID on page: ${process.env.TEST_RUNNER_BANNER_ID}`);
     const banner = await hasLocator(page, `#${process.env.TEST_RUNNER_BANNER_ID}`);
     if (!banner) {
         await page.screenshot({ path: `screens/runner-error.png` });
         throw Error(`The client test runner page could not load, Property sn_atf.schedule.enabled and sn_atf.runner.enabled must be true. Make sure the ATF Runner is online before we move on`)
     }
-    console.log(`--`);
+    log.info(`--`);
 
     await page.screenshot({ path: `screens/runner-done.png` });
 
     const timeOutMins = parseInt(process.env.TIMEOUT_MINS, 10);
-    console.log(`Setting browser timeout to ${timeOutMins} mins`);
+    log.info(`Setting browser timeout to ${timeOutMins} mins`);
     setTimeout(timeOutMins * 60 * 1000).then(async () => {
-        console.log(`Browser timeout of ${timeOutMins} mins reached, closing browser now`)
+        log.info(`Browser timeout of ${timeOutMins} mins reached, closing browser now`)
         await browser.close();
     });
 
     const ignore = [`.jsdbx`, `${process.env.INSTANCE_URL}/styles/`, `${process.env.INSTANCE_URL}/api/now/ui/`, `${process.env.INSTANCE_URL}/scripts/`, `${process.env.INSTANCE_URL}/amb/`, `${process.env.INSTANCE_URL}/xmlhttp.do`, `${process.env.INSTANCE_URL}/images/`]
-    console.log(`Runner page background requests:`);
+    log.info(`Runner page background requests:`);
     page.on('request', async (request) => {
         const url = request.url();
         if (!ignore.some((str) => url.includes(str))) {
-            console.log(`\t${url}`);
+            log.info(`\t${url}`);
         }
     })
 
@@ -201,9 +204,9 @@ const openTestRunner = async () => {
 
 const main = async () => {
 
-    console.info('-'.repeat(40));
-    console.info(`ATF Test Runner ${require('./package.json').version}`);
-    console.info('-'.repeat(40));
+    log.info('-'.repeat(40));
+    log.info(`ATF Test Runner ${require('./package.json').version}`);
+    log.info('-'.repeat(40));
 
     await validateVariables();
 

@@ -10,7 +10,7 @@ Supported Browsers:
 
 To enable, set following sys_property:
 
-- sn_atf.headless.docker_image_name  = `ghcr.io/bmoers/sn/atf-headless-runner:1.0.2`
+- sn_atf.headless.docker_image_name  = `ghcr.io/bmoers/sn/atf-headless-runner:latest`
 
 Works as-is or in combination with [Docker Socket Proxy for ServiceNow ATF Headless Browser Integration](https://github.com/bmoers/sn-docker-socket-proxy) to run the ATF Headless Runner in Azure.  
 
