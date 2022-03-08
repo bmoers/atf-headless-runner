@@ -36,7 +36,7 @@ jobs:
 
       - name: Build Docker images & push to Github Packages
         uses: docker/build-push-action@v2
-        id: docker_build_nibe
+        id: docker_build
         with:
           pull: false
           push: true
@@ -44,5 +44,5 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.event.repository.html_url }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.description Alternative Headless ATF Runner for ServiceNow
+            org.opencontainers.image.description=Alternative Headless ATF Runner for ServiceNow
 
