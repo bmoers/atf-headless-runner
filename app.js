@@ -1,7 +1,8 @@
-//const { chromium } = require('playwright');
 const playWright = require('playwright');
 const fs = require('fs-extra');
-const { setTimeout } = require("timers/promises");
+// eslint-disable-next-line node/no-missing-require
+const { setTimeout: setTimeoutPromise, setInterval: setIntervalPromise } = require('timers/promises');
+const axios = require('axios');
 
 const log = require('./lib/logger').topic(module);
 
@@ -36,13 +37,14 @@ const validateVariables = async () => {
     if (missing.length) {
         log.error('Following variables are missing')
 
-        missing.forEach(([name, description]) => log.error(`\t${name}: ${description}`));        
+        missing.forEach(([name, description]) => log.error(`\t${name}: ${description}`));
+        // eslint-disable-next-line no-process-exit
         process.exit(1);
     }
 
-    log.info(`Variables:`);
+    log.info('Variables:');
     Object.keys(mandatoryVars).forEach((name) => log.info(`\t${name.padEnd(30)} : ${process.env[name]}`));
-    log.info(`--`);
+    log.info('--');
 }
 
 
@@ -76,7 +78,7 @@ const getText = async (page, selector) => {
     } catch (e) {
         log.error(e.message);
         log.info(await page.content());
-        await page.screenshot({ path: `screens/error.png` });
+        await page.screenshot({ path: 'screens/error.png' });
         throw Error(`Text of '${selector}' not found on page`);
     }
 }
@@ -86,7 +88,23 @@ const getPassword = async () => {
         throw Error(`'${process.env.SECRET_PATH}' not found`)
     }
     const text = await fs.readFile(process.env.SECRET_PATH, 'utf8');
-    return text.replace(/(\r\n|\n|\r)/gm, "").trim();
+    return text.replace(/(\r\n|\n|\r)/gm, '').trim();
+}
+
+
+const isAgentOnline = async () => {
+    const password = await getPassword();
+    const response = await axios.get(`${process.env.INSTANCE_URL}/${process.env.HEARTBEAT_URI}?id=${process.env.AGENT_ID}`, {
+        auth: {
+            username: process.env.SN_USERNAME,
+            password: password
+        }
+    });
+
+    if(response.status != 200)
+        return false;
+
+    return (response.data?.result?.online == 'true')
 }
 
 const getBrowser = async () => {
@@ -104,10 +122,16 @@ const getBrowser = async () => {
     const browserName = browserNames[process.env.BROWSER] || defaultBrowser;
     //{ chromium, webkit, firefox }
 
-    log.info(`Open Browser`);
+    log.info('Open Browser');
     log.info(`\t${browserName}`);
-    log.info(`--`);
+    log.info('--');
     return playWright[browserName].launch();
+}
+
+const closeBrowser = async (browser) =>{
+    await browser.close();
+    // eslint-disable-next-line no-process-exit
+    process.exit(1);
 }
 
 const openTestRunner = async () => {
@@ -125,9 +149,9 @@ const openTestRunner = async () => {
     log.info(`Goto Login Page: ${loginPage}`);
     await page.goto(loginPage, { waitUntil: 'networkidle' });
     log.info('Login page is open')
-    log.info(`--`);
+    log.info('--');
 
-    await page.screenshot({ path: `screens/login-page-open.png` });
+    await page.screenshot({ path: 'screens/login-page-open.png' });
 
 
     log.info('Fill login form')
@@ -136,7 +160,7 @@ const openTestRunner = async () => {
     const password = await getPassword();
     log.info('\tEnter password')
     await page.type(`#${process.env.PASSWORD_FIELD_ID}`, password, { delay: 100 });
-    log.info(`--`);
+    log.info('--');
     await page.screenshot({ path: `screens/${process.env.LOGIN_PAGE}-filled.png` });
 
 
@@ -145,7 +169,7 @@ const openTestRunner = async () => {
         page.waitForNavigation(),
         page.click(`#${process.env.LOGIN_BUTTON_ID}`)
     ])
-    log.info(`--`);
+    log.info('--');
 
     await page.screenshot({ path: `screens/${process.env.LOGIN_PAGE}-done.png` });
 
@@ -167,7 +191,7 @@ const openTestRunner = async () => {
     if ('Success' != success)
         throw Error(`Success Tag '${process.env.VP_SUCCESS_ID}' text incorrect: ${success}`)
     log.info(`\t${process.env.VP_SUCCESS_ID.padEnd(22)} : ${success}`);
-    log.info(`--`);
+    log.info('--');
 
     await page.screenshot({ path: `screens/${process.env.HEADLESS_VALIDATION_PAGE}-done.png` });
 
@@ -177,22 +201,49 @@ const openTestRunner = async () => {
     log.info(`\tCheck for banner ID on page: ${process.env.TEST_RUNNER_BANNER_ID}`);
     const banner = await hasLocator(page, `#${process.env.TEST_RUNNER_BANNER_ID}`);
     if (!banner) {
-        await page.screenshot({ path: `screens/runner-error.png` });
-        throw Error(`The client test runner page could not load, Property sn_atf.schedule.enabled and sn_atf.runner.enabled must be true. Make sure the ATF Runner is online before we move on`)
+        await page.screenshot({ path: 'screens/runner-error.png' });
+        throw Error('The client test runner page could not load, Property sn_atf.schedule.enabled and sn_atf.runner.enabled must be true. Make sure the ATF Runner is online before we move on')
     }
-    log.info(`--`);
+    log.info('--');
 
-    await page.screenshot({ path: `screens/runner-done.png` });
+    await page.screenshot({ path: 'screens/runner-done.png' });
+
 
     const timeOutMins = parseInt(process.env.TIMEOUT_MINS, 10);
     log.info(`Setting browser timeout to ${timeOutMins} mins`);
-    setTimeout(timeOutMins * 60 * 1000).then(async () => {
+    setTimeoutPromise(timeOutMins * 60 * 1000).then(async () => {
         log.info(`Browser timeout of ${timeOutMins} mins reached, closing browser now`)
-        await browser.close();
+        await closeBrowser(browser);
     });
 
-    const ignore = [`.jsdbx`, `${process.env.INSTANCE_URL}/styles/`, `${process.env.INSTANCE_URL}/api/now/ui/`, `${process.env.INSTANCE_URL}/scripts/`, `${process.env.INSTANCE_URL}/amb/`, `${process.env.INSTANCE_URL}/xmlhttp.do`, `${process.env.INSTANCE_URL}/images/`]
-    log.info(`Runner page background requests:`);
+    if (process.env.HEARTBEAT_ENABLED == 'true') {
+        var heartBeatMins = 1
+        log.info(`Heartbeat enabled. Check every ${heartBeatMins} mins`);
+
+        const interval = async () => {
+            const iterator = setIntervalPromise(heartBeatMins * 60 * 1000, Date.now());
+            for await (const startTime of iterator) {
+                const now = Date.now();
+                if ((now - startTime) > ((timeOutMins - 2) * 60 * 1000)) // exit interval after timeoutMinutes
+                    break;
+
+                log.info(`Check agent '${process.env.AGENT_ID}' status`);
+                const online = await isAgentOnline();
+                if (!online) {
+                    log.warn(`Agent '${process.env.AGENT_ID}' is flagged as offline in ServiceNow. Closing the browser now.`)
+                    await closeBrowser(browser);
+                    break;
+                } else {
+                    log.info(`Agent '${process.env.AGENT_ID}' is online`)
+                }
+            }
+        }
+        interval();
+    }
+
+
+    const ignore = ['.jsdbx', `${process.env.INSTANCE_URL}/styles/`, `${process.env.INSTANCE_URL}/api/now/ui/`, `${process.env.INSTANCE_URL}/scripts/`, `${process.env.INSTANCE_URL}/amb/`, `${process.env.INSTANCE_URL}/xmlhttp.do`, `${process.env.INSTANCE_URL}/images/`]
+    log.info('Runner page background requests:');
     page.on('request', async (request) => {
         const url = request.url();
         if (!ignore.some((str) => url.includes(str))) {
