@@ -130,3 +130,5 @@ dist
 .pnp.*
 dev/
 screens/
+docker-compose.yml
+Dockerfile.sre
