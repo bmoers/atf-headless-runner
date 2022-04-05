@@ -128,10 +128,69 @@ const getBrowser = async () => {
     return playWright[browserName].launch();
 }
 
-const closeBrowser = async (browser) =>{
-    await browser.close();
+const closeBrowser = async (context) => {
+
+    log.info('Closing all %s pages', context.pages().length);
+    await Promise.all(context.pages().map((page) => page.close()));
+    
+    const browser = context.browser();
+    log.info('Closing context');
+    await context.close();
+
+    if(browser){
+        log.info('Closing browser')
+        await browser.close();
+    }
     // eslint-disable-next-line no-process-exit
     process.exit(1);
+}
+
+const openNewPage = async (context) => {
+
+    const page = await context.newPage();
+    page.on('pageerror', exception => {
+        log.info(`\tBrowser - Error on Page: Uncaught exception: "${exception}"`);
+    });
+
+    log.info('number of open pages %s', context.pages().length)
+
+    return page;
+}
+
+const openRunnerPage = async (context, page) => {
+    if(page){
+        log.info('Closing old runner page');
+        await page.close();
+
+        log.info('Creating new runner page');
+    }
+
+    // create a new page
+    const runner = await openNewPage(context); 
+
+    const runnerPage = `${process.env.INSTANCE_URL}/${process.env.RUNNER_URL}&sys_atf_agent=${process.env.AGENT_ID}`;
+    log.info(`Goto runner page: ${runnerPage}`);
+    await runner.goto(runnerPage)
+    log.info(`\tCheck for banner ID on page: ${process.env.TEST_RUNNER_BANNER_ID}`);
+    const banner = await hasLocator(runner, `#${process.env.TEST_RUNNER_BANNER_ID}`);
+    if (!banner) {
+        await runner.screenshot({ path: 'screens/runner-error.png' });
+        throw Error('The client test runner page could not load, Property sn_atf.schedule.enabled and sn_atf.runner.enabled must be true. Make sure the ATF Runner is online before we move on')
+    }
+    log.info('--');
+
+    await runner.screenshot({ path: 'screens/runner-done.png' });
+
+    const ignore = ['.jsdbx', `${process.env.INSTANCE_URL}/styles/`, `${process.env.INSTANCE_URL}/api/now/ui/`, `${process.env.INSTANCE_URL}/scripts/`, `${process.env.INSTANCE_URL}/amb/`, `${process.env.INSTANCE_URL}/xmlhttp.do`, `${process.env.INSTANCE_URL}/images/`]
+    log.info('Runner page background requests:');
+    runner.on('request', async (request) => {
+        const url = request.url();
+        if (!ignore.some((str) => url.includes(str))) {
+            log.info(`\t${url}`);
+        }
+    })
+
+    return runner;
 }
 
 const openTestRunner = async () => {
@@ -140,10 +199,7 @@ const openTestRunner = async () => {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
     context.setDefaultTimeout(60000);
 
-    const page = await context.newPage();
-    page.on('pageerror', exception => {
-        log.info(`\tBrowser - Error on Page: Uncaught exception: "${exception}"`);
-    });
+    let page = await openNewPage(context);
 
     const loginPage = `${process.env.INSTANCE_URL}/${process.env.LOGIN_PAGE}`;
     log.info(`Goto Login Page: ${loginPage}`);
@@ -195,61 +251,66 @@ const openTestRunner = async () => {
 
     await page.screenshot({ path: `screens/${process.env.HEADLESS_VALIDATION_PAGE}-done.png` });
 
-    const runnerPage = `${process.env.INSTANCE_URL}/${process.env.RUNNER_URL}&sys_atf_agent=${process.env.AGENT_ID}`;
-    log.info(`Goto runner page: ${runnerPage}`);
-    await page.goto(runnerPage)
-    log.info(`\tCheck for banner ID on page: ${process.env.TEST_RUNNER_BANNER_ID}`);
-    const banner = await hasLocator(page, `#${process.env.TEST_RUNNER_BANNER_ID}`);
-    if (!banner) {
-        await page.screenshot({ path: 'screens/runner-error.png' });
-        throw Error('The client test runner page could not load, Property sn_atf.schedule.enabled and sn_atf.runner.enabled must be true. Make sure the ATF Runner is online before we move on')
-    }
-    log.info('--');
-
-    await page.screenshot({ path: 'screens/runner-done.png' });
-
+    // open new runner page (tab)
+    let runner = await openRunnerPage(context, null);
 
     const timeOutMins = parseInt(process.env.TIMEOUT_MINS, 10);
     log.info(`Setting browser timeout to ${timeOutMins} mins`);
     setTimeoutPromise(timeOutMins * 60 * 1000).then(async () => {
         log.info(`Browser timeout of ${timeOutMins} mins reached, closing browser now`)
-        await closeBrowser(browser);
+        await closeBrowser(context);
     });
 
-    if (process.env.HEARTBEAT_ENABLED == 'true') {
-        var heartBeatMins = 1
-        log.info(`Heartbeat enabled. Check every ${heartBeatMins} mins`);
+    
+    const heartBeatMins = 1;
+    let modalCount = 0;
+    const heartBeatEnabled = (process.env.HEARTBEAT_ENABLED == 'true');
+    log.info(`Check every ${heartBeatMins} mins for modal overlay and heartbeat`);
 
-        const interval = async () => {
-            const iterator = setIntervalPromise(heartBeatMins * 60 * 1000, Date.now());
-            for await (const startTime of iterator) {
-                const now = Date.now();
-                if ((now - startTime) > ((timeOutMins - 2) * 60 * 1000)) // exit interval after timeoutMinutes
-                    break;
+    const heartBeatInterval = async () => {
+        let crashed = false;
+        const iterator = setIntervalPromise(heartBeatMins * 60 * 1000, Date.now());
+        for await (const startTime of iterator) {
+            const now = Date.now();
+            if ((now - startTime) > ((timeOutMins - 2) * 60 * 1000)) // exit interval after timeoutMinutes
+                break;
 
-                log.info(`Check agent '${process.env.AGENT_ID}' status`);
-                const online = await isAgentOnline();
-                if (!online) {
-                    log.warn(`Agent '${process.env.AGENT_ID}' is flagged as offline in ServiceNow. Closing the browser now.`)
-                    await closeBrowser(browser);
-                    break;
+            const buttonSelector = 'header.modal-header:visible >> button[data-dismiss="GlideModal"]';
+            const hasModal = await hasLocator(runner, buttonSelector);
+            if(hasModal){
+                if(modalCount >= 2){
+                    modalCount = 0;
+                    log.warn('Page was blocked by Modal, closing the modal now.')
+                    await runner.locator(buttonSelector).click();
                 } else {
-                    log.info(`Agent '${process.env.AGENT_ID}' is online`)
+                    // wait for the modal to be closed by ATF tests steps on the page
+                    modalCount++;
+                    log.warn('Open Modal detected on page.')
                 }
+            } else {
+                modalCount = 0;
+            }
+            
+            log.info(`Heartbeat enabled. Check agent '${process.env.AGENT_ID}' status`);
+            const online = await isAgentOnline();
+            if (!online) {
+                log.warn(`Agent '${process.env.AGENT_ID}' is flagged as offline in ServiceNow. Closing the browser now.`)
+                //await closeBrowser(context);
+                crashed = true;
+                break;
+            } else {
+                log.info(`Agent '${process.env.AGENT_ID}' is online`)
             }
         }
-        interval();
-    }
 
-
-    const ignore = ['.jsdbx', `${process.env.INSTANCE_URL}/styles/`, `${process.env.INSTANCE_URL}/api/now/ui/`, `${process.env.INSTANCE_URL}/scripts/`, `${process.env.INSTANCE_URL}/amb/`, `${process.env.INSTANCE_URL}/xmlhttp.do`, `${process.env.INSTANCE_URL}/images/`]
-    log.info('Runner page background requests:');
-    page.on('request', async (request) => {
-        const url = request.url();
-        if (!ignore.some((str) => url.includes(str))) {
-            log.info(`\t${url}`);
+        if(crashed){
+            log.info('browser has crashed, restart a new window');
+            runner = await openRunnerPage(context, runner);
         }
-    })
+    }
+    if (heartBeatEnabled) {
+        heartBeatInterval();
+    }
 
 }
 
