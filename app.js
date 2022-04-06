@@ -1,6 +1,5 @@
 const playWright = require('playwright');
 const fs = require('fs-extra');
-// eslint-disable-next-line node/no-missing-require
 const { setTimeout: setTimeoutPromise, setInterval: setIntervalPromise } = require('timers/promises');
 const axios = require('axios');
 
@@ -24,18 +23,18 @@ const mandatoryVars = {
     'VP_HAS_ROLE_ID': 'There was no role element id specified in the request (add or set property: sn_atf.headless.vp_has_role_id)',
     'VP_SUCCESS_ID': 'There was no success element id specified in the request (add or set property: sn_atf.headless.vp_success_id)',
     'TEST_RUNNER_BANNER_ID': 'There was no banner element id page specified in the request (add or set property: sn_atf.headless.runner_banner_id)'
-}
+};
 
 const validateVariables = async () => {
     const missing = Object.entries(mandatoryVars).reduce((out, [name, description]) => {
         if (process.env[name] == undefined)
-            out.push([name, description])
+            out.push([name, description]);
         return out;
-    }, [])
+    }, []);
 
 
     if (missing.length) {
-        log.error('Following variables are missing')
+        log.error('Following variables are missing');
 
         missing.forEach(([name, description]) => log.error(`\t${name}: ${description}`));
         // eslint-disable-next-line no-process-exit
@@ -45,7 +44,7 @@ const validateVariables = async () => {
     log.info('Variables:');
     Object.keys(mandatoryVars).forEach((name) => log.info(`\t${name.padEnd(30)} : ${process.env[name]}`));
     log.info('--');
-}
+};
 
 
 const getLocator = async (page, selector) => {
@@ -56,7 +55,7 @@ const getLocator = async (page, selector) => {
     } catch (e) {
         throw Error(`Selector '${selector}' not found on page`);
     }
-}
+};
 
 const hasLocator = async (page, selector) => {
     try {
@@ -65,7 +64,7 @@ const hasLocator = async (page, selector) => {
     } catch (e) {
         return false;
     }
-}
+};
 
 const getText = async (page, selector) => {
     try {
@@ -81,15 +80,15 @@ const getText = async (page, selector) => {
         await page.screenshot({ path: 'screens/error.png' });
         throw Error(`Text of '${selector}' not found on page`);
     }
-}
+};
 
 const getPassword = async () => {
     if (!await fs.pathExists(process.env.SECRET_PATH)) {
-        throw Error(`'${process.env.SECRET_PATH}' not found`)
+        throw Error(`'${process.env.SECRET_PATH}' not found`);
     }
     const text = await fs.readFile(process.env.SECRET_PATH, 'utf8');
     return text.replace(/(\r\n|\n|\r)/gm, '').trim();
-}
+};
 
 
 const isAgentOnline = async () => {
@@ -101,11 +100,11 @@ const isAgentOnline = async () => {
         }
     });
 
-    if(response.status != 200)
+    if (response.status != 200)
         return false;
 
-    return (response.data?.result?.online == 'true')
-}
+    return (response.data?.result?.online == 'true');
+};
 
 const getBrowser = async () => {
     const browserNames = {
@@ -116,7 +115,7 @@ const getBrowser = async () => {
         'chrome': 'chromium',
         'chromium': 'chromium',
         'safari': 'webkit'
-    }
+    };
     const defaultBrowser = 'chromium';
 
     const browserName = browserNames[process.env.BROWSER] || defaultBrowser;
@@ -126,24 +125,25 @@ const getBrowser = async () => {
     log.info(`\t${browserName}`);
     log.info('--');
     return playWright[browserName].launch();
-}
+};
 
 const closeBrowser = async (context) => {
 
     log.info('Closing all %s pages', context.pages().length);
     await Promise.all(context.pages().map((page) => page.close()));
-    
+
     const browser = context.browser();
     log.info('Closing context');
     await context.close();
 
-    if(browser){
-        log.info('Closing browser')
+    if (browser) {
+        log.info('Closing browser');
         await browser.close();
     }
     // eslint-disable-next-line no-process-exit
     process.exit(1);
-}
+};
+
 
 const openNewPage = async (context) => {
 
@@ -152,167 +152,233 @@ const openNewPage = async (context) => {
         log.info(`\tBrowser - Error on Page: Uncaught exception: "${exception}"`);
     });
 
-    log.info('number of open pages %s', context.pages().length)
+    log.info('New page opened. Current number of open pages: %s', context.pages().length);
 
     return page;
-}
+};
 
-const openRunnerPage = async (context, page) => {
-    if(page){
-        log.info('Closing old runner page');
-        await page.close();
-
-        log.info('Creating new runner page');
-    }
+const openRunnerPage = async (context) => {
 
     // create a new page
-    const runner = await openNewPage(context); 
+    const runner = await openNewPage(context);
 
     const runnerPage = `${process.env.INSTANCE_URL}/${process.env.RUNNER_URL}&sys_atf_agent=${process.env.AGENT_ID}`;
     log.info(`Goto runner page: ${runnerPage}`);
-    await runner.goto(runnerPage)
+    await runner.goto(runnerPage);
+
     log.info(`\tCheck for banner ID on page: ${process.env.TEST_RUNNER_BANNER_ID}`);
     const banner = await hasLocator(runner, `#${process.env.TEST_RUNNER_BANNER_ID}`);
     if (!banner) {
         await runner.screenshot({ path: 'screens/runner-error.png' });
-        throw Error('The client test runner page could not load, Property sn_atf.schedule.enabled and sn_atf.runner.enabled must be true. Make sure the ATF Runner is online before we move on')
+        throw Error('The client test runner page could not load, Property sn_atf.schedule.enabled and sn_atf.runner.enabled must be true. Make sure the ATF Runner is online before we move on');
     }
     log.info('--');
 
     await runner.screenshot({ path: 'screens/runner-done.png' });
 
-    const ignore = ['.jsdbx', `${process.env.INSTANCE_URL}/styles/`, `${process.env.INSTANCE_URL}/api/now/ui/`, `${process.env.INSTANCE_URL}/scripts/`, `${process.env.INSTANCE_URL}/amb/`, `${process.env.INSTANCE_URL}/xmlhttp.do`, `${process.env.INSTANCE_URL}/images/`]
-    log.info('Runner page background requests:');
+    const ignore = ['.jsdbx', `${process.env.INSTANCE_URL}/styles/`, `${process.env.INSTANCE_URL}/api/now/ui/`, `${process.env.INSTANCE_URL}/scripts/`, `${process.env.INSTANCE_URL}/amb/`, `${process.env.INSTANCE_URL}/xmlhttp.do`, `${process.env.INSTANCE_URL}/images/`];
+
     runner.on('request', async (request) => {
         const url = request.url();
         if (!ignore.some((str) => url.includes(str))) {
-            log.info(`\t${url}`);
+            log.info('runner-request : %s', url);
         }
-    })
+    });
+    runner.on('crash', async (page) => {
+        log.error('PAGE CRASH: %s', page.url());
+    });
+    runner.on('console', async (msg) => {
+        if (msg.type() == 'error') {
+            log.info('console-error  : %s', msg.text());
+        }
+    });
 
     return runner;
-}
+};
 
-const openTestRunner = async () => {
 
-    const browser = await getBrowser();
-    const context = await browser.newContext({ ignoreHTTPSErrors: true });
-    context.setDefaultTimeout(60000);
+const login = async (context) => {
 
-    let page = await openNewPage(context);
+    context.clearCookies();
+    const page = await openNewPage(context);
 
     const loginPage = `${process.env.INSTANCE_URL}/${process.env.LOGIN_PAGE}`;
     log.info(`Goto Login Page: ${loginPage}`);
     await page.goto(loginPage, { waitUntil: 'networkidle' });
-    log.info('Login page is open')
+    log.info('Login page is open');
     log.info('--');
 
     await page.screenshot({ path: 'screens/login-page-open.png' });
 
 
-    log.info('Fill login form')
-    log.info('\tEnter username')
+    log.info('Fill login form');
+    log.info('\tEnter username');
     await page.type(`#${process.env.USER_FIELD_ID}`, process.env.SN_USERNAME, { delay: 100 });
     const password = await getPassword();
-    log.info('\tEnter password')
+    log.info('\tEnter password');
     await page.type(`#${process.env.PASSWORD_FIELD_ID}`, password, { delay: 100 });
     log.info('--');
     await page.screenshot({ path: `screens/${process.env.LOGIN_PAGE}-filled.png` });
 
 
-    log.info('Submit login form')
+    log.info('Submit login form');
     await Promise.all([
         page.waitForNavigation(),
         page.click(`#${process.env.LOGIN_BUTTON_ID}`)
-    ])
+    ]);
     log.info('--');
 
     await page.screenshot({ path: `screens/${process.env.LOGIN_PAGE}-done.png` });
 
     const validationPage = `${process.env.INSTANCE_URL}/${process.env.HEADLESS_VALIDATION_PAGE}`;
     log.info(`Goto access validation page: ${validationPage}`);
-    await page.goto(validationPage, { waitUntil: 'load' })
+    await page.goto(validationPage, { waitUntil: 'load' });
 
     const validation = await getText(page, `#${process.env.VP_VALIDATION_ID}`);
     if ('Headless Validation' != validation)
-        throw Error(`Validation Tag '${process.env.VP_VALIDATION_ID}' text incorrect: ${validation}`)
+        throw Error(`Validation Tag '${process.env.VP_VALIDATION_ID}' text incorrect: ${validation}`);
     log.info(`\t${process.env.VP_VALIDATION_ID.padEnd(22)} : ${validation}`);
 
     const role = await getText(page, `#${process.env.VP_HAS_ROLE_ID}`);
     if ('Has Valid Role' != role)
-        throw Error(`Role Tag '${process.env.VP_HAS_ROLE_ID}' text incorrect: ${role}`)
+        throw Error(`Role Tag '${process.env.VP_HAS_ROLE_ID}' text incorrect: ${role}`);
     log.info(`\t${process.env.VP_HAS_ROLE_ID.padEnd(22)} : ${role}`);
 
     const success = await getText(page, `#${process.env.VP_SUCCESS_ID}`);
     if ('Success' != success)
-        throw Error(`Success Tag '${process.env.VP_SUCCESS_ID}' text incorrect: ${success}`)
+        throw Error(`Success Tag '${process.env.VP_SUCCESS_ID}' text incorrect: ${success}`);
     log.info(`\t${process.env.VP_SUCCESS_ID.padEnd(22)} : ${success}`);
     log.info('--');
 
     await page.screenshot({ path: `screens/${process.env.HEADLESS_VALIDATION_PAGE}-done.png` });
+};
 
-    // open new runner page (tab)
-    let runner = await openRunnerPage(context, null);
+const deleteAgent = async () => {
+    const password = await getPassword();
+    const response = await axios.delete(`${process.env.INSTANCE_URL}/api/now/table/sys_atf_agent/${process.env.AGENT_ID}`, {
+        auth: {
+            username: process.env.SN_USERNAME,
+            password: password
+        }
+    });
+    if (response.status != 204) {
+        log.error('Deletion of Runner with ID %s failed', process.env.AGENT_ID);
+    } else {
+        log.info('Runner %s successfully deleted. Ready to be recreated.', process.env.AGENT_ID);
+    }
+};
+
+const run = async () => {
+
+    const browser = await getBrowser();
 
     const timeOutMins = parseInt(process.env.TIMEOUT_MINS, 10);
     log.info(`Setting browser timeout to ${timeOutMins} mins`);
+
     setTimeoutPromise(timeOutMins * 60 * 1000).then(async () => {
-        log.info(`Browser timeout of ${timeOutMins} mins reached, closing browser now`)
-        await closeBrowser(context);
+        log.info(`Browser timeout of ${timeOutMins} mins reached, closing browser now`);
+        await browser.close();
+        // eslint-disable-next-line no-process-exit
+        process.exit(1);
     });
 
-    
+    await openTestRunner(browser);
+};
+
+const isImpersonationIssue = async (context) => {
+
+    const impersonatedUser = await openNewPage(context);
+    await impersonatedUser.goto(`${process.env.INSTANCE_URL}/sys_user.do?sys_id=javascript:gs.getUserID()&XML`);
+    await impersonatedUser.screenshot({ path: 'screens/impersonated-user-info-xml.png' });
+    const userXML = await impersonatedUser.content();
+    await impersonatedUser.close();
+
+    const user = {};
+    let m = userXML.match(/<sys_id>(.*)<\/sys_id>/);
+    if(m){
+        user.sysId = m[1];
+    }
+    m = userXML.match(/<user_name>(.*)<\/user_name>/);
+    if(m){
+        user.userName = m[1];
+    }
+
+    const impersonationHangs = (process.env.SN_USERNAME != user.userName);
+    if(impersonationHangs){
+        log.warn('Impersonation hangs in user: \'%s\' (%s)', user.userName, user.sysId);
+    } else {
+        log.inf('Not impersonated - user: \'%s\' (%s)', user.userName, user.sysId);
+    }
+
+    return impersonationHangs;
+};
+
+const openTestRunner = async (browser) => {
+
+    // close all contexts
+    await Promise.all(browser.contexts().map(async (context, index) => {
+        log.info('Closing context nr. %d', index);
+        await context.close();
+    }));
+
+    // create the current context
+    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    context.setDefaultTimeout(60000);
+
+    // login to the instance
+    await login(context);
+
+    // open new runner page (tab)
+    await openRunnerPage(context);
+
     const heartBeatMins = 1;
-    let modalCount = 0;
     const heartBeatEnabled = (process.env.HEARTBEAT_ENABLED == 'true');
-    log.info(`Check every ${heartBeatMins} mins for modal overlay and heartbeat`);
+    const timeOutMins = parseInt(process.env.TIMEOUT_MINS, 10);
+
+    log.info(`Check every ${heartBeatMins} mins for heartbeat`);
 
     const heartBeatInterval = async () => {
-        let crashed = false;
+
         const iterator = setIntervalPromise(heartBeatMins * 60 * 1000, Date.now());
+
         for await (const startTime of iterator) {
             const now = Date.now();
             if ((now - startTime) > ((timeOutMins - 2) * 60 * 1000)) // exit interval after timeoutMinutes
                 break;
 
-            const buttonSelector = 'header.modal-header:visible >> button[data-dismiss="GlideModal"]';
-            const hasModal = await hasLocator(runner, buttonSelector);
-            if(hasModal){
-                if(modalCount >= 2){
-                    modalCount = 0;
-                    log.warn('Page was blocked by Modal, closing the modal now.')
-                    await runner.locator(buttonSelector).click();
-                } else {
-                    // wait for the modal to be closed by ATF tests steps on the page
-                    modalCount++;
-                    log.warn('Open Modal detected on page.')
-                }
-            } else {
-                modalCount = 0;
-            }
-            
+
             log.info(`Heartbeat enabled. Check agent '${process.env.AGENT_ID}' status`);
             const online = await isAgentOnline();
             if (!online) {
-                log.warn(`Agent '${process.env.AGENT_ID}' is flagged as offline in ServiceNow. Closing the browser now.`)
-                //await closeBrowser(context);
-                crashed = true;
-                break;
+                log.warn(`Agent '${process.env.AGENT_ID}' is flagged as offline in ServiceNow. Restarting the browser now.`);
+
+                const impersonationIssue = await isImpersonationIssue(context);
+                if (impersonationIssue) {
+                    log.warn('Impersonation Issue detected. Restarting browser.');
+                    // delete the current runner in servicenow as the runner sys_id must be the same
+                    await deleteAgent();
+                    return openTestRunner(context.browser());
+                } else {
+                    log.warn('Agent is offline due unknown reason, exit.');
+                    await closeBrowser(context);
+                    break;
+                }
+
             } else {
-                log.info(`Agent '${process.env.AGENT_ID}' is online`)
+                log.info(`Agent '${process.env.AGENT_ID}' is online`);
             }
         }
 
-        if(crashed){
-            log.info('browser has crashed, restart a new window');
-            runner = await openRunnerPage(context, runner);
-        }
-    }
-    if (heartBeatEnabled) {
-        heartBeatInterval();
-    }
+    };
 
-}
+    if (heartBeatEnabled) {
+        await heartBeatInterval();
+    } else {
+        log.warn('Heartbeat is disabled! This can cause the browser to hang (e.g. on missing unimpersonate). Make sure you set the sys_property "sn_atf.headless.heartbeat_enabled" to "true"!');
+    }
+    
+
+};
 
 const main = async () => {
 
@@ -322,7 +388,7 @@ const main = async () => {
 
     await validateVariables();
 
-    await openTestRunner();
+    await run();
 
-}
+};
 main();
