@@ -1,9 +1,15 @@
 const playWright = require('playwright');
 const fs = require('fs-extra');
-const { setTimeout: setTimeoutPromise, setInterval: setIntervalPromise } = require('timers/promises');
+const { setInterval: setIntervalPromise } = require('timers/promises');
 const axios = require('axios');
 
 const log = require('./lib/logger').topic(module);
+
+if(process.env.DEVELOP && !process.env.AGENT_ID){
+    const crypto = require('crypto');
+    process.env.AGENT_ID = crypto.randomBytes(16).toString('hex');
+    log.info('DEVELOP MODE : using random AGENT_ID %s', process.env.AGENT_ID);
+}
 
 const mandatoryVars = {
     'AGENT_ID': 'The agent ID should be auto-generated from the instance',
@@ -45,7 +51,6 @@ const validateVariables = async () => {
     Object.keys(mandatoryVars).forEach((name) => log.info(`\t${name.padEnd(30)} : ${process.env[name]}`));
     log.info('--');
 };
-
 
 const getLocator = async (page, selector) => {
     try {
@@ -89,7 +94,6 @@ const getPassword = async () => {
     const text = await fs.readFile(process.env.SECRET_PATH, 'utf8');
     return text.replace(/(\r\n|\n|\r)/gm, '').trim();
 };
-
 
 const isAgentOnline = async () => {
     const password = await getPassword();
@@ -136,14 +140,10 @@ const closeBrowser = async (context) => {
     log.info('Closing context');
     await context.close();
 
-    if (browser) {
-        log.info('Closing browser');
-        await browser.close();
-    }
-    // eslint-disable-next-line no-process-exit
-    process.exit(1);
-};
+    log.info('Closing browser');
+    await browser.close();
 
+};
 
 const openNewPage = async (context) => {
 
@@ -184,9 +184,7 @@ const openRunnerPage = async (context) => {
             log.info('runner-request : %s', url);
         }
     });
-    runner.on('crash', async (page) => {
-        log.error('PAGE CRASH: %s', page.url());
-    });
+    
     runner.on('console', async (msg) => {
         if (msg.type() == 'error') {
             log.info('console-error  : %s', msg.text());
@@ -195,7 +193,6 @@ const openRunnerPage = async (context) => {
 
     return runner;
 };
-
 
 const login = async (context) => {
 
@@ -229,6 +226,10 @@ const login = async (context) => {
     log.info('--');
 
     await page.screenshot({ path: `screens/${process.env.LOGIN_PAGE}-done.png` });
+
+    if(await hasLocator(page, '.dp-invalid-login-msg')){
+        throw Error('ATF User credentials invalid!');
+    }
 
     const validationPage = `${process.env.INSTANCE_URL}/${process.env.HEADLESS_VALIDATION_PAGE}`;
     log.info(`Goto access validation page: ${validationPage}`);
@@ -268,23 +269,6 @@ const deleteAgent = async () => {
     }
 };
 
-const run = async () => {
-
-    const browser = await getBrowser();
-
-    const timeOutMins = parseInt(process.env.TIMEOUT_MINS, 10);
-    log.info(`Setting browser timeout to ${timeOutMins} mins`);
-
-    setTimeoutPromise(timeOutMins * 60 * 1000).then(async () => {
-        log.info(`Browser timeout of ${timeOutMins} mins reached, closing browser now`);
-        await browser.close();
-        // eslint-disable-next-line no-process-exit
-        process.exit(1);
-    });
-
-    await openTestRunner(browser);
-};
-
 const isImpersonationIssue = async (context) => {
 
     const impersonatedUser = await openNewPage(context);
@@ -303,11 +287,14 @@ const isImpersonationIssue = async (context) => {
         user.userName = m[1];
     }
 
-    const impersonationHangs = (process.env.SN_USERNAME != user.userName);
-    if(impersonationHangs){
+    const impersonationHangs = (user.userName && process.env.SN_USERNAME != user.userName);
+
+    if(!user.userName){
+        log.warn('Impersonation user information not found on page: %s', userXML);
+    } else if(impersonationHangs){
         log.warn('Impersonation hangs in user: \'%s\' (%s)', user.userName, user.sysId);
     } else {
-        log.inf('Not impersonated - user: \'%s\' (%s)', user.userName, user.sysId);
+        log.info('Not impersonated - user: \'%s\' (%s)', user.userName, user.sysId);
     }
 
     return impersonationHangs;
@@ -325,58 +312,127 @@ const openTestRunner = async (browser) => {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
     context.setDefaultTimeout(60000);
 
-    // login to the instance
-    await login(context);
-
-    // open new runner page (tab)
-    await openRunnerPage(context);
-
     const heartBeatMins = 1;
     const heartBeatEnabled = (process.env.HEARTBEAT_ENABLED == 'true');
     const timeOutMins = parseInt(process.env.TIMEOUT_MINS, 10);
+    let idleTimer = Date.now();
+    const idleTimeoutMins = parseInt(process.env.IDLE_TIMEOUT_MINS || 0, 10);
 
-    log.info(`Check every ${heartBeatMins} mins for heartbeat`);
+    if (!heartBeatEnabled) {
+        log.warn('Heartbeat is disabled! This can cause the browser to hang (e.g. on failed un-impersonate). Make sure you set the sys_property "sn_atf.headless.heartbeat_enabled" to "true"!');
+    }
 
-    const heartBeatInterval = async () => {
+    log.info(`Setting browser timeout to ${timeOutMins} mins`);
+        
+    if(idleTimeoutMins){
+        log.info('Test runner will be stopped if idle for more than %d minutes. ', idleTimeoutMins);
+    }
+    log.info('--');
 
-        const iterator = setIntervalPromise(heartBeatMins * 60 * 1000, Date.now());
+    // login to the instance
+    await login(context);
+    
+    const ac = new AbortController();
+    const signal = ac.signal;
+    
+    signal.onabort = async () => {
+        log.info('interval successfully aborted.');
+    };
 
-        for await (const startTime of iterator) {
-            const now = Date.now();
-            if ((now - startTime) > ((timeOutMins - 2) * 60 * 1000)) // exit interval after timeoutMinutes
-                break;
+    // open new runner page (tab)
+    const runner = await openRunnerPage(context);
 
+    // restart the browser if it crashes
+    runner.on('crash', async (page) => {
+        log.error('PAGE CRASH: %s', page.url());
+        // abort the checkInterval()
+        ac.abort();
+        log.warn('Restarting browser.');
+        await deleteAgent();
+        return openTestRunner(context.browser());
+    });
 
-            log.info(`Heartbeat enabled. Check agent '${process.env.AGENT_ID}' status`);
-            const online = await isAgentOnline();
-            if (!online) {
-                log.warn(`Agent '${process.env.AGENT_ID}' is flagged as offline in ServiceNow. Restarting the browser now.`);
+    if(idleTimeoutMins){
+        const ignore = [`${process.env.INSTANCE_URL}/api/now/ui/`, `${process.env.INSTANCE_URL}/amb/`, `${process.env.INSTANCE_URL}/xmlhttp.do`];
+        // update the idleTimer if the browser is running tests (background requests are ignored)
+        runner.on('request', async (request) => {
+            const url = request.url();
+            if (!ignore.some((str) => url.includes(str))) {
+                idleTimer = Date.now();
+            }
+        });
+    }
 
-                const impersonationIssue = await isImpersonationIssue(context);
-                if (impersonationIssue) {
-                    log.warn('Impersonation Issue detected. Restarting browser.');
-                    // delete the current runner in servicenow as the runner sys_id must be the same
-                    await deleteAgent();
-                    return openTestRunner(context.browser());
-                } else {
-                    log.warn('Agent is offline due unknown reason, exit.');
+    const checkInterval = async () => {
+
+        log.info(`Check every ${heartBeatMins} mins for browser status.`);
+        log.info('--');
+
+        try {
+
+            const iterator = setIntervalPromise(heartBeatMins * 60 * 1000, Date.now(), { signal });
+
+            for await (const startTime of iterator) {
+                    
+                const now = Date.now();
+
+                // close the browser after TIMEOUT_MINS
+                if ((now - startTime) > (timeOutMins * 60 * 1000)){ 
+                    log.info(`Browser timeout of ${timeOutMins} mins reached, closing browser now`);
                     await closeBrowser(context);
                     break;
                 }
 
-            } else {
-                log.info(`Agent '${process.env.AGENT_ID}' is online`);
+                // close the browser after it becomes idle
+                if (idleTimeoutMins && (now - idleTimer) > (idleTimeoutMins * 60 * 1000)) {
+                    log.info('Test runner was idle for more than %d minutes. ', idleTimeoutMins);
+                    await closeBrowser(context);
+                    break;
+                }
+
+                if(heartBeatEnabled){
+                    log.info(`Heartbeat enabled. Check agent '${process.env.AGENT_ID}' status`);
+                    const online = await isAgentOnline();
+                    if (!online) {
+                        log.warn(`Agent '${process.env.AGENT_ID}' is flagged as offline in ServiceNow. Restarting the browser now.`);
+
+                        const impersonationIssue = await isImpersonationIssue(context);
+                        if (impersonationIssue) {
+                            log.warn('Impersonation Issue detected. Restarting browser.');
+                            // delete the current runner in servicenow as the runner sys_id must be the same
+                            await deleteAgent();
+                            return openTestRunner(context.browser());
+                        } else {
+                            log.warn('Agent is offline due unknown reason, exit.');
+                            await closeBrowser(context);
+                            break;
+                        }
+
+                    } else {
+                        log.info(`Agent '${process.env.AGENT_ID}' is online`);
+                    }
+                }
+
             }
+
+        } catch (err){
+            if (err.name === 'AbortError'){
+                return log.info('Heartbeat iterator aborted');
+            }
+            return err;
         }
 
     };
 
-    if (heartBeatEnabled) {
-        await heartBeatInterval();
-    } else {
-        log.warn('Heartbeat is disabled! This can cause the browser to hang (e.g. on missing unimpersonate). Make sure you set the sys_property "sn_atf.headless.heartbeat_enabled" to "true"!');
-    }
-    
+    await checkInterval();
+
+};
+
+const run = async () => {
+
+    const browser = await getBrowser();
+
+    await openTestRunner(browser);
 
 };
 
@@ -392,3 +448,4 @@ const main = async () => {
 
 };
 main();
+
