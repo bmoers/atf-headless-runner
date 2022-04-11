@@ -5,7 +5,34 @@ const axios = require('axios');
 
 const log = require('./lib/logger').topic(module);
 
-if(process.env.DEVELOP && !process.env.AGENT_ID){
+const stats = {
+    runnerInstanceCount: 0,
+    atfRunnerPageCount: 0,
+    crashCount: 0,
+    loginCount: 0,
+    impersonationHangsCount: 0
+};
+
+const logStats = (code, name) => {
+    if (stats.logged)
+        return;
+    log.info('-'.repeat(45));
+    log.info(' Total number of Test Runner Instances : # %d', stats.runnerInstanceCount);
+    log.info(' Total number of Logins                : # %d', stats.loginCount);
+    log.info(' Total number of ATF Runners           : # %d', stats.atfRunnerPageCount);
+    log.info(' Total number of Impersonation Issues  : # %d', stats.impersonationHangsCount);
+    log.info(' Total number of ATF Runner Crash      : # %d', stats.crashCount);
+    if (code || name) {
+        log.info(' Exit code: %s (%s)', code, name);
+    }
+    log.info('-'.repeat(45));
+    stats.logged = true;
+};
+
+const events = ['exit', 'SIGINT', 'SIGTERM', 'SIGUSR1', 'SIGUSR2', 'uncaughtException'];
+events.forEach((eventName) => process.on(eventName, logStats.bind(null, eventName)));
+
+if (process.env.DEVELOP && !process.env.AGENT_ID) {
     const crypto = require('crypto');
     process.env.AGENT_ID = crypto.randomBytes(16).toString('hex');
     log.info('DEVELOP MODE : using random AGENT_ID %s', process.env.AGENT_ID);
@@ -128,7 +155,7 @@ const getBrowser = async () => {
     log.info('Open Browser');
     log.info(`\t${browserName}`);
     log.info('--');
-    return playWright[browserName].launch();
+    return playWright[browserName].launch({ headless: process.env.HEADLESS !== 'false' }); // , devtools: true
 };
 
 const closeBrowser = async (context) => {
@@ -142,6 +169,8 @@ const closeBrowser = async (context) => {
 
     log.info('Closing browser');
     await browser.close();
+
+    logStats();
 
 };
 
@@ -159,8 +188,31 @@ const openNewPage = async (context) => {
 
 const openRunnerPage = async (context) => {
 
+    stats.atfRunnerPageCount++;
+
+    if (context.pages().length >= 2) {
+        log.info('Reusing runner page');
+        return context.pages()[1];
+
+    }
+
     // create a new page
     const runner = await openNewPage(context);
+
+    // to check if the event handler is already set
+    runner._hasEvent = function (eventName) {
+        return this?.__events?.[eventName];
+    };
+
+    // singleton to set the event handler only once
+    runner._setEvent = function (eventName, eventHandler) {
+        if (this._hasEvent(eventName)) {
+            return;
+        }
+        this.__events = this.__events || {};
+        this.on(eventName, eventHandler.bind(null));
+        this.__events[eventName] = true;
+    };
 
     const runnerPage = `${process.env.INSTANCE_URL}/${process.env.RUNNER_URL}&sys_atf_agent=${process.env.AGENT_ID}`;
     log.info(`Goto runner page: ${runnerPage}`);
@@ -177,17 +229,16 @@ const openRunnerPage = async (context) => {
     await runner.screenshot({ path: 'screens/runner-done.png' });
 
     const ignore = ['.jsdbx', `${process.env.INSTANCE_URL}/styles/`, `${process.env.INSTANCE_URL}/api/now/ui/`, `${process.env.INSTANCE_URL}/scripts/`, `${process.env.INSTANCE_URL}/amb/`, `${process.env.INSTANCE_URL}/xmlhttp.do`, `${process.env.INSTANCE_URL}/images/`];
-
-    runner.on('request', async (request) => {
+    runner._setEvent('request', async (request) => {
         const url = request.url();
         if (!ignore.some((str) => url.includes(str))) {
             log.info('runner-request : %s', url);
         }
     });
-    
-    runner.on('console', async (msg) => {
+
+    runner._setEvent('console', async (msg) => {
         if (msg.type() == 'error') {
-            log.info('console-error  : %s', msg.text());
+            log.warn('console-error  : %s on %s', msg.text(), msg.location().url);
         }
     });
 
@@ -196,8 +247,16 @@ const openRunnerPage = async (context) => {
 
 const login = async (context) => {
 
-    context.clearCookies();
-    const page = await openNewPage(context);
+    stats.loginCount++;
+
+    const page = await (async () => {
+        if (context.pages().length) {
+            // login on the same page (don't to a context.clearCookies() as it might interfere with the atf runner page)
+            return context.pages()[0];
+        } else {
+            return openNewPage(context);
+        }
+    })();
 
     const loginPage = `${process.env.INSTANCE_URL}/${process.env.LOGIN_PAGE}`;
     log.info(`Goto Login Page: ${loginPage}`);
@@ -210,10 +269,10 @@ const login = async (context) => {
 
     log.info('Fill login form');
     log.info('\tEnter username');
-    await page.type(`#${process.env.USER_FIELD_ID}`, process.env.SN_USERNAME, { delay: 100 });
+    await page.type(`#${process.env.USER_FIELD_ID}`, process.env.SN_USERNAME, { delay: 10 });
     const password = await getPassword();
     log.info('\tEnter password');
-    await page.type(`#${process.env.PASSWORD_FIELD_ID}`, password, { delay: 100 });
+    await page.type(`#${process.env.PASSWORD_FIELD_ID}`, password, { delay: 10 });
     log.info('--');
     await page.screenshot({ path: `screens/${process.env.LOGIN_PAGE}-filled.png` });
 
@@ -227,7 +286,7 @@ const login = async (context) => {
 
     await page.screenshot({ path: `screens/${process.env.LOGIN_PAGE}-done.png` });
 
-    if(await hasLocator(page, '.dp-invalid-login-msg')){
+    if (await hasLocator(page, '.dp-invalid-login-msg')) {
         throw Error('ATF User credentials invalid!');
     }
 
@@ -254,20 +313,6 @@ const login = async (context) => {
     await page.screenshot({ path: `screens/${process.env.HEADLESS_VALIDATION_PAGE}-done.png` });
 };
 
-const deleteAgent = async () => {
-    const password = await getPassword();
-    const response = await axios.delete(`${process.env.INSTANCE_URL}/api/now/table/sys_atf_agent/${process.env.AGENT_ID}`, {
-        auth: {
-            username: process.env.SN_USERNAME,
-            password: password
-        }
-    });
-    if (response.status != 204) {
-        log.error('Deletion of Runner with ID %s failed', process.env.AGENT_ID);
-    } else {
-        log.info('Runner %s successfully deleted. Ready to be recreated.', process.env.AGENT_ID);
-    }
-};
 
 const isImpersonationIssue = async (context) => {
 
@@ -279,19 +324,20 @@ const isImpersonationIssue = async (context) => {
 
     const user = {};
     let m = userXML.match(/<sys_id>(.*)<\/sys_id>/);
-    if(m){
+    if (m) {
         user.sysId = m[1];
     }
     m = userXML.match(/<user_name>(.*)<\/user_name>/);
-    if(m){
+    if (m) {
         user.userName = m[1];
     }
 
     const impersonationHangs = (user.userName && process.env.SN_USERNAME != user.userName);
 
-    if(!user.userName){
+    if (!user.userName) {
         log.warn('Impersonation user information not found on page: %s', userXML);
-    } else if(impersonationHangs){
+    } else if (impersonationHangs) {
+        stats.impersonationHangsCount++;
         log.warn('Impersonation hangs in user: \'%s\' (%s)', user.userName, user.sysId);
     } else {
         log.info('Not impersonated - user: \'%s\' (%s)', user.userName, user.sysId);
@@ -302,18 +348,21 @@ const isImpersonationIssue = async (context) => {
 
 const openTestRunner = async (browser) => {
 
-    // close all contexts
-    await Promise.all(browser.contexts().map(async (context, index) => {
-        log.info('Closing context nr. %d', index);
-        await context.close();
-    }));
+    stats.runnerInstanceCount++;
 
     // create the current context
-    const context = await browser.newContext({ ignoreHTTPSErrors: true });
-    context.setDefaultTimeout(60000);
+    const context = await (async () => {
+        if (browser.contexts().length) {
+            return browser.contexts()[0];
+        } else {
+            const context = await browser.newContext({ ignoreHTTPSErrors: true });
+            context.setDefaultTimeout(60000);
+            return context;
+        }
+    })();
 
     const heartBeatMins = 1;
-    const heartBeatEnabled = (process.env.HEARTBEAT_ENABLED == 'true');
+    const heartBeatEnabled = ((process.env.HEARTBEAT_ENABLED || 'true') == 'true');
     const timeOutMins = parseInt(process.env.TIMEOUT_MINS, 10);
     let idleTimer = Date.now();
     const idleTimeoutMins = parseInt(process.env.IDLE_TIMEOUT_MINS || 0, 10);
@@ -323,39 +372,40 @@ const openTestRunner = async (browser) => {
     }
 
     log.info(`Setting browser timeout to ${timeOutMins} mins`);
-        
-    if(idleTimeoutMins){
+
+    if (idleTimeoutMins) {
         log.info('Test runner will be stopped if idle for more than %d minutes. ', idleTimeoutMins);
     }
     log.info('--');
 
     // login to the instance
     await login(context);
-    
+
     const ac = new AbortController();
     const signal = ac.signal;
-    
+
     signal.onabort = async () => {
-        log.info('interval successfully aborted.');
+        log.info('Aborting heartbeat iterator.');
     };
 
     // open new runner page (tab)
     const runner = await openRunnerPage(context);
 
     // restart the browser if it crashes
-    runner.on('crash', async (page) => {
+    runner._setEvent('crash', async (page) => {
+        stats.crashCount++;
+
         log.error('PAGE CRASH: %s', page.url());
         // abort the checkInterval()
         ac.abort();
         log.warn('Restarting browser.');
-        await deleteAgent();
         return openTestRunner(context.browser());
     });
 
-    if(idleTimeoutMins){
+    if (idleTimeoutMins) {
         const ignore = [`${process.env.INSTANCE_URL}/api/now/ui/`, `${process.env.INSTANCE_URL}/amb/`, `${process.env.INSTANCE_URL}/xmlhttp.do`];
         // update the idleTimer if the browser is running tests (background requests are ignored)
-        runner.on('request', async (request) => {
+        runner._setEvent('request', async (request) => {
             const url = request.url();
             if (!ignore.some((str) => url.includes(str))) {
                 idleTimer = Date.now();
@@ -373,11 +423,11 @@ const openTestRunner = async (browser) => {
             const iterator = setIntervalPromise(heartBeatMins * 60 * 1000, Date.now(), { signal });
 
             for await (const startTime of iterator) {
-                    
+
                 const now = Date.now();
 
                 // close the browser after TIMEOUT_MINS
-                if ((now - startTime) > (timeOutMins * 60 * 1000)){ 
+                if ((now - startTime) > (timeOutMins * 60 * 1000)) {
                     log.info(`Browser timeout of ${timeOutMins} mins reached, closing browser now`);
                     await closeBrowser(context);
                     break;
@@ -390,17 +440,15 @@ const openTestRunner = async (browser) => {
                     break;
                 }
 
-                if(heartBeatEnabled){
+                if (heartBeatEnabled) {
                     log.info(`Heartbeat enabled. Check agent '${process.env.AGENT_ID}' status`);
                     const online = await isAgentOnline();
                     if (!online) {
-                        log.warn(`Agent '${process.env.AGENT_ID}' is flagged as offline in ServiceNow. Restarting the browser now.`);
+                        log.warn(`Agent '${process.env.AGENT_ID}' is flagged as offline in ServiceNow. Restarting the browser session now.`);
 
                         const impersonationIssue = await isImpersonationIssue(context);
                         if (impersonationIssue) {
-                            log.warn('Impersonation Issue detected. Restarting browser.');
-                            // delete the current runner in servicenow as the runner sys_id must be the same
-                            await deleteAgent();
+                            log.warn('Impersonation Issue detected. Restarting browser session.');
                             return openTestRunner(context.browser());
                         } else {
                             log.warn('Agent is offline due unknown reason, exit.');
@@ -415,8 +463,8 @@ const openTestRunner = async (browser) => {
 
             }
 
-        } catch (err){
-            if (err.name === 'AbortError'){
+        } catch (err) {
+            if (err.name === 'AbortError') {
                 return log.info('Heartbeat iterator aborted');
             }
             return err;
@@ -438,14 +486,14 @@ const run = async () => {
 
 const main = async () => {
 
-    log.info('-'.repeat(40));
+    log.info('-'.repeat(45));
     log.info(`ATF Test Runner ${require('./package.json').version}`);
-    log.info('-'.repeat(40));
+    log.info('-'.repeat(45));
 
     await validateVariables();
 
     await run();
-
 };
+
 main();
 
