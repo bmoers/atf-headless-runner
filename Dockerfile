@@ -18,6 +18,9 @@ ADD ./lib ./lib
 
 HEALTHCHECK NONE
 
+RUN mkdir ./screens && \
+    chmod 777 ./screens
+
 USER pwuser
 
 CMD ["node", "app.js"]
