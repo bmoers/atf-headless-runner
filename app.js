@@ -79,19 +79,19 @@ const validateVariables = async () => {
     log.info('--');
 };
 
-const getLocator = async (page, selector) => {
+const getLocator = async (page, selector, timeout = 10000) => {
     try {
         const locator = await page.locator(selector);
-        await locator.waitFor({ timeout: 200, state: 'attached' });
+        await locator.waitFor({ timeout, state: 'attached' });
         return locator;
     } catch (e) {
         throw Error(`Selector '${selector}' not found on page`);
     }
 };
 
-const hasLocator = async (page, selector) => {
+const hasLocator = async (page, selector, timeout) => {
     try {
-        await getLocator(page, selector);
+        await getLocator(page, selector, timeout);
         return true;
     } catch (e) {
         return false;
@@ -139,23 +139,51 @@ const isAgentOnline = async () => {
 
 const getBrowser = async () => {
     const browserNames = {
+        'headlesschromium': 'chromium',
         'headlesschrome': 'chromium',
         'headlessfirefox': 'firefox',
         'headlesssafari': 'webkit',
-        'firefox': 'firefox',
+        'headlessedge': 'chromium',
+
         'chrome': 'chromium',
         'chromium': 'chromium',
-        'safari': 'webkit'
+        'firefox': 'firefox',
+        'safari': 'webkit',
+        'edge': 'chromium'
     };
+
     const defaultBrowser = 'chromium';
 
     const browserName = browserNames[process.env.BROWSER] || defaultBrowser;
-    //{ chromium, webkit, firefox }
+    //{ chromium, webkit, firefox, edge }
+
+
+    const options = {
+        headless: process.env.HEADLESS !== 'false',
+        devtools: false
+    };
+
+    if (browserName == 'chromium') {
+        options.args = ['--disable-dev-shm-usage'];
+    }
+
+    if (process.env.BROWSER.endsWith('edge')) {
+        options.channel = 'msedge';
+    } else if (process.env.BROWSER.endsWith('chrome')) {
+        options.channel = 'chrome';
+    } else if (process.env.BROWSER.endsWith('chromium')) {
+        options.channel = 'chromium';
+    }
 
     log.info('Open Browser');
-    log.info(`\t${browserName}`);
+    if (options.channel) {
+        log.info(`\t${browserName.toUpperCase()} on channel '${options.channel.toUpperCase()}'`);
+    } else {
+        log.info(`\t${browserName.toUpperCase()}`);
+    }
     log.info('--');
-    return playWright[browserName].launch({ headless: process.env.HEADLESS !== 'false' }); // , devtools: true
+
+    return playWright[browserName].launch(options);
 };
 
 const closeBrowser = async (context) => {
@@ -286,7 +314,7 @@ const login = async (context) => {
 
     await page.screenshot({ path: `screens/${process.env.LOGIN_PAGE}-done.png` });
 
-    if (await hasLocator(page, '.dp-invalid-login-msg')) {
+    if (await hasLocator(page, '.dp-invalid-login-msg', 1000)) {
         throw Error('ATF User credentials invalid!');
     }
 
