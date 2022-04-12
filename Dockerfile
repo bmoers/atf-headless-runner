@@ -3,9 +3,10 @@ FROM mcr.microsoft.com/playwright:focal
 ENV NODE_ENV production
 ENV NODE_EXTRA_CA_CERTS /etc/ssl/certs/ca-certificates.crt
 
-RUN update-ca-certificates && \
-    npm install -g npm@8.6.0 && \
-    npx playwright install-deps
+RUN npx playwright install chromium chrome msedge firefox webkit && \
+    npx playwright install-deps chromium chrome msedge firefox webkit
+
+RUN npm install -g npm@8.6.0
     
 WORKDIR /usr/src/app
 
@@ -17,4 +18,6 @@ ADD ./lib ./lib
 
 HEALTHCHECK NONE
 
-CMD node app.js
+USER pwuser
+
+CMD ["node", "app.js"]
