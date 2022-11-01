@@ -5,3 +5,4 @@
 !debug.js
 !package*.json
 !lib
+!install.sh

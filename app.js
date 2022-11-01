@@ -167,13 +167,18 @@ const getBrowser = async () => {
         options.args = ['--disable-dev-shm-usage'];
     }
 
-    if (process.env.BROWSER.endsWith('edge')) {
-        options.channel = 'msedge';
-    } else if (process.env.BROWSER.endsWith('chrome')) {
-        options.channel = 'chrome';
-    } else if (process.env.BROWSER.endsWith('chromium')) {
-        options.channel = 'chromium';
+    if(process.arch == 'x64'){
+        if (process.env.BROWSER.endsWith('edge')) {
+            options.channel = 'msedge';
+        } else if (process.env.BROWSER.endsWith('chrome')) {
+            options.channel = 'chrome';
+        } else if (process.env.BROWSER.endsWith('chromium')) {
+            options.channel = 'chromium';
+        }    
+    } else {
+        log.info(`Browser channels (msedge,chrome,chromium) are only supported on x64 arch (running on ${process.arch})`);
     }
+
 
     log.info('Open Browser');
     if (options.channel) {
