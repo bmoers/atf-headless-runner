@@ -319,9 +319,11 @@ const login = async (context) => {
 
     await page.screenshot({ path: `screens/${process.env.LOGIN_PAGE}-done.png` });
 
-    if (await hasLocator(page, '.dp-invalid-login-msg', 1000)) {
+    // check for error message box ('.outputmsg.outputmsg_error' is for 'Next Experience UI')
+    if (await hasLocator(page, '.dp-invalid-login-msg, .outputmsg.outputmsg_error', 1000)) {
         throw Error('ATF User credentials invalid!');
     }
+
 
     const validationPage = `${process.env.INSTANCE_URL}/${process.env.HEADLESS_VALIDATION_PAGE}`;
     log.info(`Goto access validation page: ${validationPage}`);
